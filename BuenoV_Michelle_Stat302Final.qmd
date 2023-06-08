@@ -1,0 +1,756 @@
+---
+title: "The Shadows of Enumeration:"
+subtitle: "What Can Learn about Afro-Latinos Using U.S. Census Data"
+author: Michelle Bueno Vásquez
+date: today
+
+format:
+  html:
+    toc: true
+    embed-resources: true
+    code-fold: show
+    link-external-newwindow: true
+    fig-dpi: 300
+    
+execute:
+  warning: false
+
+from: markdown+emoji 
+---
+
+### Objective
+
+The goal of this project is to use Census analysis to provide a detailed profile of the Afro-Latino population in the U.S., their geographical spread, socioeconomic characteristics, and how they fare compared to Latinos who identify as White-only and non-Black.
+
+### Data
+
+All of the data I used in these analyses come from the U.S. Census Burau, by way of the R package `tidycensus`.
+
+[tidycensus](https://walker-data.com/tidycensus/) Developed and maintained by Kyle Walker, this package allows for streamlined use of the US Census Buerau's data API, providing tidy data sets to users without needing to download or clean data sets outside of R studio. `tidycensus` also enables users to easily use spatial data and geometry, for ease in creating heat maps or population geography charts.
+
+Using `tidycensus`, I accessed the U.S. Bureau's following survey objects:
+
+-  `get_acs()`, which requests data from the 1-year and 5-year American Community Survey samples. Data are available from the 1-year ACS back to 2005 and the 5-year ACS back to 2005-2009.
+
+-  `get_estimates()`, an interface to the Population Estimates APIs. These datasets include yearly estimates of population characteristics by state, county, and metropolitan area, along with components of change demographic estimates like births, deaths, and migration rates.
+
+-  `get_flows()`, an interface to the ACS Migration Flows APIs. Includes information on in- and out-flows from various geographies for the 5-year ACS samples, enabling origin-destination analyses.
+
+-  `get_pums()`, which accesses data from the ACS Public Use Microdata Sample APIs. These samples include anonymized individual-level records from the ACS organized by household and are highly useful for many different social science analyses.^[Source: *Analyzing US Census Data: Methods, Maps, and Models in R* by Kyle Walker]
+
+
+
+```{r}
+#| label: loading-packages
+
+# Loading packages
+library(tidycensus)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(patchwork)
+library(statebins)
+library(maps)
+library(tools)
+library(giscoR)
+library(s2)
+library(geosphere)
+library(wesanderson)
+```
+
+## 5-year ACS Data
+- Pros: very precise, up to date
+- Cons: does not allow for inclusion of Latinos who select Black *and* one or more other races (which is likely most Afro-Latinos, given differing ideas on race in Latin America)
+
+```{r}
+#| label: acs-data-load
+#| cache: true
+
+# Creating a 5 year ACS data sets
+# state hisp pop
+state_hisp_pop <- get_acs(
+  geography = "state",
+  variables = c(latino_pop = "B03003_003"),
+  year = 2020,
+  resolution = "20m",
+  progress_bar = FALSE
+) %>% 
+  select(NAME, estimate) %>% 
+  rename(lat_pop = estimate)
+
+# Black ONLY race
+acs_bl <- get_acs(
+  geography = "state",
+  variables = c(black_latinos = "B03002_014"),
+  geometry = TRUE,
+  year = 2020,
+  resolution = "20m",
+  progress_bar = FALSE
+) %>% 
+  inner_join(state_hisp_pop) %>% 
+  mutate(
+    pop_perc = (estimate/lat_pop)*100
+    ) %>% 
+  shift_geometry()
+
+# White ONLY race
+acs_wl <- get_acs(
+  geography = "state",
+  variables = c(white_latinos = "B03002_013"),
+  geometry = TRUE,
+  year = 2020,
+  resolution = "20m",
+  progress_bar = FALSE
+) %>% 
+  inner_join(state_hisp_pop) %>% 
+  mutate(
+    pop_perc = (estimate/lat_pop)*100
+  ) %>%
+  shift_geometry()
+```
+## ACS 2020 Heat Maps
+
+```{r}
+#| label: acs-heat-maps
+
+black_only_map <- acs_bl %>% 
+  ggplot(aes(fill = estimate)) +
+  geom_sf() +
+  scale_fill_viridis_c(option = "rocket",
+                       limits = c(0, 30000),
+                       breaks = c(0, 15000, 30000),
+                       labels = c("0", "15,000", "30,000 or more"),
+                       oob = scales::squish) +
+  labs(
+    fill = "Latinos who identify\nas Black only"
+  ) + 
+  ggtitle("Latino population distribution by Black- or White-only identification") +
+  theme_void()
+
+white_only_map <- acs_wl %>% 
+  ggplot(aes(fill = estimate)) +
+  geom_sf() +
+  scale_fill_viridis_c(option = "mako",
+                       limits = c(0, 650000),
+                       breaks = c(0, 325000, 650000),
+                       labels = c("0", "325,000", "650,000 or more"),
+                       oob = scales::squish) +
+  labs(
+    fill = "Latinos who identify\nas white only"
+  ) +
+  theme_void()
+
+black_only_map / white_only_map 
+```
+## ACS 2020 state bins
+
+```{r}
+#| label: acs-state-bins
+
+# Population cutting
+bl_estimate <- acs_bl$estimate
+wl_estimate <- acs_wl$estimate
+
+# Black latino bins
+acs_bl <- mutate(
+  acs_bl,
+  pop_bins = cut(
+    ifelse(is.na(bl_estimate), 10000, bl_estimate),
+    breaks = c(0, 15000, 30000),
+    right = FALSE
+  )
+)
+
+# Black only Latinos plot (minimizes the Afro-latino pop, avoid including in write-ups)
+black_bins <- acs_bl %>% 
+  ggplot() +
+  statebins::geom_statebins(
+    mapping = aes(state = NAME,
+                  fill = estimate)
+    ) +
+  scale_fill_viridis_c(option = "rocket",
+                       limits = c(0, 30000),
+                       breaks = c(0, 15000, 30000),
+                       labels = c("0",
+                                  "15K",
+                                  "30K+"),
+                       oob = scales::squish) +
+  ggtitle("Latinos that identify as Black-only") +
+  theme_statebins()
+
+
+# White latino bins
+acs_wl <- mutate(
+  acs_wl,
+  pop_bins = cut(
+    ifelse(is.na(wl_estimate), 400000, wl_estimate),
+    breaks = c(0, 325000, 650000),
+    right = FALSE
+  )
+)
+
+# White only Latino plot
+white_bins <- acs_wl %>% 
+  ggplot() +
+  statebins::geom_statebins(
+    mapping = aes(state = NAME,
+                  fill = estimate)
+    ) +
+  scale_fill_viridis_c(option = "mako",
+                       limits = c(0, 650000),
+                       breaks = c(0, 325000, 650000),
+                       labels = c("0",
+                                  "325K",
+                                  "400K+"),
+                       oob = scales::squish) +
+   ggtitle("Latinos that identify as White-only") +
+  theme_statebins()
+
+# Plots in same figure
+black_bins 
+white_bins
+```
+
+# 2019 Population Estimates
+- Pros: allows for disaggregation of race and latino origin
+- Cons: based on Census projections; robust, yet not actual population counts
+
+## Estimates heatmaps
+
+```{r}
+#| label: acs-estimates-wrangling
+#| cache: true
+
+# Creating a Census estimates data set
+us_estimates <- get_estimates(
+  geography = "state",
+  product = "characteristics",
+  breakdown = c("RACE", "HISP"),
+  year = 2019,
+  breakdown_labels = TRUE,
+  geometry = TRUE,
+  progress_bar = FALSE
+) %>% 
+  shift_geometry() %>% 
+  filter(
+    RACE == "Black alone or in combination" |
+      RACE == "White alone" |
+      RACE == "All races") %>% 
+  filter(HISP == "Hispanic")
+
+tot_hisp_pop_est <- us_estimates %>%  
+  filter(RACE == "All races") %>% 
+  select(GEOID, NAME, value) %>% 
+  rename(total_hisp_pop = value)
+
+# Black alone or any other race
+afrolat_state <- us_estimates %>% 
+  filter(RACE == "Black alone or in combination",
+         HISP == "Hispanic") %>% 
+  st_join(tot_hisp_pop_est) %>% 
+  mutate(
+    pop_perc = (value/total_hisp_pop)*100
+  ) 
+
+# White alone
+whitelat_state <- us_estimates %>% 
+  filter(RACE == "White alone",
+         HISP == "Hispanic") %>% 
+  st_join(tot_hisp_pop_est) %>% 
+  mutate(
+    pop_perc = (value/total_hisp_pop)*100
+  )
+```
+
+## Population proportion state bins
+
+```{r}
+#| label: state-bins-wrangling
+
+
+# Subsets for state bins visualization
+white_perc_pop_bins <- whitelat_state %>% 
+  ggplot() +
+  statebins::geom_statebins(
+    mapping = aes(state = NAME.x,
+                  fill = pop_perc)
+  ) +
+  scale_fill_viridis_c(option = "mako",
+                       limits = c(70, 90),
+                       breaks = c(50, 75, 90),
+                       labels = c("50","< 75%", "95%"),
+                       oob = scales::squish,
+                       name = "% of State Hispanic/\nLatino Population") +
+  labs(
+    title = "White-only Latinos\nas percent of state Latino population"
+  ) +
+  theme_statebins()
+
+afro_perc_pop_bins <- afrolat_state %>% 
+  ggplot() +
+  statebins::geom_statebins(
+    mapping = aes(state = NAME.x,
+                  fill = pop_perc)
+  ) +
+  scale_fill_viridis_c(option = "rocket",
+                       limits = c(2, 17),
+                       breaks = c(0, 7.5, 17, 20),
+                       labels = c("0","< 7.5%", "20%", "20%"),
+                       oob = scales::squish,
+                       name = "% of State Hispanic/\nLatino Population") +
+  labs(
+    title = "Afro-Latinos\nas percent of state Latino population"
+  ) +
+  theme_statebins()
+
+white_perc_pop_bins
+afro_perc_pop_bins
+
+
+```
+
+## Estimates bubble map
+
+```{r}
+#| label: bubble-map
+#| cache: true
+
+# Loading US map info
+map_states <- map_data("state") %>% as_tibble()
+map_cty <- map_data("county") %>% as_tibble()
+
+cty_names <- unique(map_cty$subregion)
+state_names <- unique(map_states$region)
+
+# Hispanic pop per county
+cty_hisp_pop_est <- get_estimates(
+  geography = "county",
+  product = "characteristics",
+  breakdown = c("RACE", "HISP"),
+  year = 2019,
+  breakdown_labels = TRUE
+) %>% 
+  filter(RACE == "All races") %>% 
+  filter(HISP == "Hispanic") %>% 
+  select(GEOID, NAME, value) %>% 
+  mutate(NAME = tolower(NAME)) %>% 
+  rename(total_hisp_pop = value)
+
+# Polygon data set
+afrolat_polygon <- get_estimates(
+  geography = "county",
+  product = "characteristics",
+  breakdown = c("RACE", "HISP"),
+  year = 2019,
+  breakdown_labels = TRUE)  %>% 
+  filter(RACE == "Black alone or in combination") %>%
+  filter(HISP == "Hispanic") %>%
+  mutate(NAME = tolower(NAME)) %>% 
+  mutate(region = 
+           str_extract(NAME,
+                       paste(state_names,
+                             collapse = "|"))) %>%
+  inner_join(cty_hisp_pop_est) %>%
+  mutate(pop_perc = (value/total_hisp_pop)*100) %>% 
+  mutate(subregion = 
+           str_extract(NAME, 
+                       paste(cty_names, 
+                             collapse = "|"))) %>% 
+  inner_join(map_cty, relationship = "many-to-many") %>% 
+  mutate(value = na_if(value, 0)) %>% 
+  drop_na()
+
+
+# Discarding duplicates for county data
+afrolat_polygon2 <- afrolat_polygon %>%
+  distinct(subregion, .keep_all = TRUE) %>% 
+  drop_na() %>% 
+  filter(value > 29)
+
+# Scaling parameters - making a small quantiles vector
+cty_quantiles <- quantile(afrolat_polygon2$value)
+
+# Create the discrete values for population per country using `cut`
+levels_breaks <- c(30, 
+                   65, 
+                   100, 
+                   300, 
+                   500, 
+                   1000,
+                   5000,
+                   10000,
+                   50000,
+                   100000,
+                   300000)
+bubble_cut <- cut(afrolat_polygon2$value,
+                  breaks = levels_breaks,
+                  include.lowest = TRUE,
+                  right = FALSE,
+                  ordered_result = TRUE,
+                  dig.lab = 3)
+
+afrolat_polygon2$bubble_cut <- bubble_cut
+
+levels_count <- length(levels(afrolat_polygon2$bubble_cut))
+
+
+# Create the sizes scale 
+manual_size <- seq(1, by = 1, length.out = levels_count)
+
+names(manual_size) <- levels(afrolat_polygon2$bubble_cut)
+
+levels_labels <- c("30 - 65",
+                "65 - 100",
+                "100 - 300",
+                "300 - 500",
+                "500 - 1,000",
+                "1,000 - 5,000",
+                "5,000 - 10,000",
+                "10,000 - 50,000",
+                "50,000 - 100,000",
+                "100,000 - 250,000")
+
+# Color scales
+levels_colors <- c("[30,65)" = "#fde0dd",
+                   "[65,100)"  = "#fcc5c0",
+                   "[100,300)" = "#fa9fb5",
+                   "[300,500)" = "#f768a1",
+                   "[500,1e+03)" = "#dd3497", 
+                   "[1e+03,5e+03)" = "#ae017e",
+                   "[5e+03,1e+04)" =  "#7a0177",
+                   "[1e+04,5e+04)" = "#49006a",
+                   "[5e+04,1e+05)" = "#51209F",
+                   "[1e+05,3e+05]" = "#221A80" 
+                   )
+
+color_scale <- scales::seq_gradient_pal(levels_colors)
+
+# Plotting - need to add long and lat data
+base_bubble_plot <- ggplot() +
+  geom_polygon(data = map_states,
+               aes(x = long,
+                   y = lat, 
+                   group = group),
+               fill = "gray99",
+               col = "gray50") +
+  geom_point(data = afrolat_polygon2,
+             aes(x = long, y = lat,
+                 size = factor(bubble_cut),
+                 col = factor(bubble_cut)),
+             alpha = 0.3,
+             ) 
+
+final_bubble_plot <- base_bubble_plot +
+  scale_size_discrete(
+    name = "Afro-Latinos\nPer County",
+    labels = levels_labels
+  ) +
+  scale_color_manual(
+    name = "Afro-Latinos\nPer County",
+    labels = levels_labels,
+    values = levels_colors
+  ) +
+  labs(
+    title = "U.S. Afro-Latino Population Per County",
+    subtitle = "Indiviudals who identified as Hispanic and Black alone or \nin combination with other races (total 2.5 million)",
+    caption = "Author: Michelle Bueno Vásquez\nData: U.S. Census Bureau 2019 Population Estimates"
+  ) +
+  theme_void()
+
+final_bubble_plot
+
+```
+
+
+# PUMS Data
+
+```{r}
+#| label: pums-wrangling
+
+# PUMS Data Wrangling
+
+pums_vars <- c(hisp_org = "HISP",
+               black = "RACBLK",   
+               mig_country = "MIGSP",
+               housh_income = "HINCP",
+               edu_level = "SCHL",
+               hlth_ins_cov = "HICOV",
+               citizen = "CIT",
+               birth_place = "WAOB",
+               food_stamps = "FS",
+               house_language = "HHL",
+               limited_english = "LNGI",
+               home_lang = "LANP",
+               internet = "ACCESSINET",
+               employment = "ESR",
+               rent_income = "GRPIP"
+               )
+
+pums_vars_selection <- c("mig_country",
+                         "black",          
+                         "hisp_org",           
+                         "housh_income",
+                         "edu_level",
+                         "hlth_ins_cov",
+                         "citizen",
+                         "birth_place",
+                         "food_stamps",
+                         "house_language",
+                         "limited_english",
+                         "home_lang",
+                         "internet",
+                         "employment",
+                         "rent_income")
+
+#Loading data for Afro-Latinos
+pums_blackhisp_dat <- read_csv("blackhisp_detailed_data") %>% 
+  rename(all_of(pums_vars)) %>% 
+  select(all_of(pums_vars_selection))
+
+# Recoding country codes
+pums_afro_tidy <- pums_blackhisp_dat %>% 
+  mutate(hisp_org = case_match(
+    hisp_org,
+    "02" ~ "Mexico",
+    "03" ~ "Puerto Rico",
+    "04" ~ "Cuba",
+    "05" ~ "Dominican Republic",
+    "06" ~ "Costa Rica",
+    "07" ~ "Guatemala",
+    "08" ~ "Honduras",
+    "09" ~ "Nicaragua",
+    "10" ~ "Panama",
+    "11" ~ "El Salvador",
+    "12" ~ "Other Central Am.",
+    "13" ~ "Argentina",
+    "14" ~ "Bolivia",
+    "15" ~ "Chile",
+    "16" ~ "Colombia",
+    "17" ~ "Ecuador",
+    "18" ~ "Paraguay",
+    "19" ~ "Peru",
+    "20" ~ "Uruguay",
+    "21" ~ "Venezuela",
+    "22" ~ "Other South Am.",
+    "24" ~ "Spain"
+  ))
+```
+
+## Afro-Latinos Latin America Countries of Origin
+
+```{r}
+#| label: lat-am-wrangling
+
+# Names of Lat Am countries
+
+lat_am_countries <- c("Brazil",
+                      "Uruguay", 
+                      "Argentina", 
+                      "French Guiana", 
+                      "Suriname", 
+                      "Colombia", 
+                      "Venezuela",
+                      "Bolivia", 
+                      "Ecuador", 
+                      "Chile", 
+                      "Paraguay", 
+                      "Peru", 
+                      "Guyana", 
+                      "Panama",
+                      "Costa Rica", 
+                      "Nicaragua", 
+                      "Honduras", 
+                      "El Salvador", 
+                      "Belize", 
+                      "Guatemala", 
+                      "Mexico", 
+                      "Trinidad and Tobago",
+                      "Caribe", 
+                      "Puerto Rico", 
+                      "Dominican Republic", 
+                      "Haiti", 
+                      "Jamaica", 
+                      "Cuba", 
+                      "Bahamas", 
+                      "Antiles",
+                      "Dominica", 
+                      "Saba")
+
+# Creating a map df
+map_tib <- map_data(map = "world",
+                    regions = lat_am_countries) %>% 
+  select(-subregion) 
+
+# Centroid coordinates for country data
+centroids <- map_tib %>% 
+  group_by(region) %>% 
+  group_modify(~ data.frame(centroid(cbind(.x$long, .x$lat)))) %>% 
+  mutate(long = lon) %>% 
+  select(-lon)
+
+# Population count from countries of orgin tibble
+tally_tib <- pums_afro_tidy %>% 
+  count(hisp_org) %>% 
+  arrange(desc(n)) %>% 
+  cbind(as.factor(c(23:1))) %>% 
+  rbind(c("Brazil", 0), c("Haiti", 0))
+
+colnames(tally_tib) <- c("hisp_org", "tally", "pop_ranking")
+
+tally_tib <- tally_tib %>% 
+  mutate(tally = as.numeric(tally))
+
+# Adding centroid and tally data to data set
+pums_afro_tidy <- pums_afro_tidy %>% 
+  mutate(
+    region = hisp_org,
+  ) %>% 
+  inner_join(centroids) %>% 
+  inner_join(tally_tib) 
+
+# Adding tally data to map tibble
+tally_tib <- tally_tib %>% 
+  rename(region = hisp_org)
+
+map_tib <- map_tib %>% 
+  inner_join(tally_tib)
+
+```
+
+
+
+```{r}
+#| label: lat-am-origins-plots
+
+lat_am_plot <- ggplot() + 
+  geom_polygon(data = map_tib,
+               aes(x = long,
+                   y = lat,
+                   group = group,
+                   fill = tally),
+               col = "gray50",
+               size = 0.2
+               ) +
+  scale_fill_viridis_c(option = "inferno",
+                        name = "Population\n(thousands)",
+                       labels = c("0",
+                                  "5,000",
+                                  "10,000",
+                                  "15,000",
+                                  "20,000",
+                                  "25,000")) +
+  coord_cartesian(expand = FALSE) +
+  labs(
+    title = "Country of origin of Afro-Latinos*",
+    caption = "*DISCLAIMER: Census data wrongfully excludes Haiti and Brazil from consideration as Latino "
+  ) +
+  theme_bw()
+
+caribbean_plot <- ggplot() + 
+  geom_polygon(data = map_tib,
+               aes(x = long,
+                   y = lat,
+                   group = group,
+                   fill = tally),
+               col = "gray50",
+               size = 0.2
+               ) +
+  scale_fill_viridis_c(option = "inferno",
+                       name = "Population\n(thousands)",
+                       labels = c("0",
+                                  "5,000",
+                                  "10,000",
+                                  "15,000",
+                                  "20,000",
+                                  "25,000")) +
+  coord_cartesian(xlim = c(-110, -65),
+                  ylim = c(15, 32),
+                  expand = FALSE) +
+  labs(
+    title = "Most Afro-Latinos are of Caribbean Ancestry*",
+    caption = "*DISCLAIMER: Census data wrongfully excludes Haiti and Brazil from consideration as Latino "
+  ) +
+  theme_bw()
+
+lat_am_plot
+caribbean_plot
+
+### Origin Barplot
+tally_tib %>% 
+  filter(!region %in% c("Spain", "Haiti", "Brazil", "NA")) %>% 
+  drop_na() %>% 
+  ggplot(aes(x = reorder(region, tally),
+           y = tally)
+       ) +
+  geom_col(fill = "cyan4") +
+  coord_flip() +
+  labs(x = "Population Count (thousands)",
+       y = "Country of Origin",
+       title = "Afro-Latinos by country of origin") +
+  theme_bw()
+```
+## Comparisons
+
+```{r}
+
+# Income data across top 5 national origin groups
+
+income_densities <- pums_afro_tidy %>% 
+  filter(region %in% c("Mexico", 
+                       "Puerto Rico", 
+                       "Dominican Republic", 
+                       "Cuba", 
+                       "Panama")) %>% 
+  drop_na() %>% 
+  ggplot(aes(x = housh_income,
+             fill = region,
+             color = region)) +
+  geom_density(aes(y = ..scaled..),
+               alpha = 0.4) +
+  scale_fill_brewer(palette = "Set1",
+                    name = "Country of origin") +
+  scale_color_brewer(palette = "Set1",
+                    name = "Country of origin") +
+  labs(x = NULL,
+       y = "Density",
+       title = "Household income for Afro-Latino by top origin groups") +
+  scale_x_continuous(labels = scales::dollar,
+                     limits = c(0, 250000)) +
+  theme_bw() +
+  theme(
+    axis.ticks.x = element_blank()
+  )
+
+income_densities
+
+income_densities +
+  facet_wrap(~region) +
+  theme(
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank()
+  )
+
+
+```
+# [ShinyApp: Dominican population across states](https://m-bueno-v.shinyapps.io/where-dominicans-app/)
+
+I designed a `ShinyApp` where users can explore the Dominican population densities in their state of interest using the 2020 ACS data.
+
+The app can be accesed by clicking the section title above. Enjoy!
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

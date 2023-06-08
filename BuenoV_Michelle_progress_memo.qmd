@@ -1,0 +1,99 @@
+---
+title: "Progress Memo"
+subtitle: |
+  | Final Project 
+  | Data Visualization (STAT 302)
+author: "Michelle Bueno Vásquez"
+date: today
+
+format:
+  html:
+    toc: true
+    embed-resources: true
+---
+
+```{r}
+#| label: loading-libraries
+#| echo: false
+#| warning: false
+
+library(tidycensus)
+library(tidyverse)
+library(sf)
+library(tigris)
+
+```
+
+## Data source
+
+For my final project, I plan to use the `tidycensus` repository to access Census American Community Survey 5-year and 1-year estimates data. I aim to analyze trends among those who self-identify as both Hispanic/Latino and Black, in hopes to create a profile for the Afro-Latino community in the United States.
+
+[The American Community Survey](https://www.census.gov/programs-surveys/acs) 
+The American Community Survey (ACS) concentrates popular economic and demographic data into singular geographic areas. Unlike the general US Census data, the ACS allows for more specific disaggregation and granular analysis.
+
+[tidycensus](https://walker-data.com/tidycensus/) 
+Developed and maintained by Kyle Walker, this package allows for streamlined use of the US Census Buerau's data API, providing tidy data sets to users without needing to download or clean data sets outside of R studio. `tidycensus` also enables users to easily use spatial data and geometry, for ease in creating heat maps or population geography charts.
+
+## Basic data description
+
+This is a very large data set containing 27,850 variables. I am interested in key demographic and economic variables including but not limited to:
+
+- Hispanic or Latino by Race: Black
+- Hispanic or Latino by Race: White
+- Poverty Status
+- Healthcare
+- Education
+- Country of Origin
+
+```{r}
+#| label: data-desc
+#| warning: false
+
+# Viewing variables 
+
+vars <- load_variables(2020, "acs5", cache = TRUE)
+
+# Variable examples
+print(head(vars))
+
+# Creating a data set
+bw_latinos <- get_acs(
+  geography = "state",
+  variables = c(black_latinos = "B03002_014",
+                white_latinos = "B03002_013"),
+  geometry = TRUE,
+  year = 2020,
+ resolution = "20m",
+ progress_bar = FALSE
+) %>% 
+  shift_geometry()
+
+# Small data set example
+print(head(bw_latinos))
+
+skimr::skim_without_charts(bw_latinos)
+
+```
+
+## Why this data
+
+I chose this data source because it is a core aspect of my dissertation project which focuses on the institutionalization of Afro-Latino erasure by U.S. administration (such as the Census) and the popularization of Latino as a panethnicity turned race. To adequately pursue my research agenda, I need to understand how the Census Bureau categorizes Black Latinos and how it may miss the mark. For instance, the general Census, which is popularly used by national organizations and agencies, completely negates the existence of racial categories within the Latino ethnicity ([Hernandez 2021](https://academic.oup.com/nyu-press-scholarship-online/book/42776/chapter-abstract/360857311?redirectedFrom=fulltext)). This does a disservice to Afro-Latinos who are most likely to suffer economic, health, housing, education, and political barriers ([Holder and Aja 2021](https://books.google.com/books?hl=en&lr=&id=SvYrEAAAQBAJ&oi=fnd&pg=PR7&dq=Afro-Latinos+in+the+US+Economy&ots=ugWbWWOx-m&sig=ONZaWq7n0KFCvKOa4_cLmUW0P4g#v=onepage&q=Afro-Latinos%20in%20the%20US%20Economy&f=false)). This merging of Latinos of all races under one group benefits non-Black Latino led political organizations and leadership, many of whom discriminate against Black Latinos and fail to redistribute resources or include them in their political agendas ([Howard 2018](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=3355885)).
+
+Though the Decennial Census data does not allow for disaggregation by race for those who identify as Latino, the ACS does allow for this kidn of analysis. For this reason, I hope to examine the data that the ACS has gathred on Afro-Latinos to get a sense of how the group fares compared to Latinos of other races, and if there is a marked difference in socioeconomic status and political attitudes. I hope to answer the following questions:
+
+1.  Where do Afro-Latinos live? Which states are more densely populated with them?
+2.  Do they live in urban areas, or also spread to rural places?
+3.  How are Afro-Latinos faring economically? How do they compare to non-Black, or even white, Latinos?
+4.  What proportion of Afro-Latinos are foreign born versus born in the U.S.?
+5.  What Latin American nationalities are most Afro-Latinos?
+6.  Do Afro-Latinos have access to healthcare and fair housing?
+7.  Do Afro-Latinos lean right or left in their political views? Are they more or less liberal/conservative than non-Black Latinos?
+8.  Does race impact the socioeconomic or political profile of Latinos?
+
+## Visualization plan
+
+I plan to use mapping data and show heat maps of Latino populations by race. My goal is to animate these so users and click through and select different demographics to get an idea of where different racial groups are concentrated. I also aim to show comparison graphics on income, healthcare, housing, nationality, and foreign versus U.S. born. These would also ideally be animated to allow to easy comparison across groups. Incorporating a heat map of Latin America to show the prevalence of Afro-Latino nationalities would also be helpful.
+
+### Misc
+
+I worry that I won't be able to cross-tabulate the data, such as finding certain income/healthcare/political markers for those who identify as Latino and Black.
